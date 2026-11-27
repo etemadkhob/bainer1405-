@@ -9,6 +9,13 @@ import { TradingViewChart } from './components/TradingViewChart';
 import { ASSET_MAP, ASSETS, FIVE_MINUTES_MS } from './constants/assets';
 import { getSessionStatus, runQuantEngine, selectBestOpportunity } from './engine/quantEngine';
 import {
+  APPROX_SETTLE_DELAY_MS,
+  judgeSignal,
+  pickApproximateCandle,
+  pickExactClosedCandle,
+  settleQualityForSource,
+} from './engine/settlement';
+import {
   fetchExactCandleByOpenTime,
   fetchLiveTickers,
   fetchMarketCandles,
@@ -75,7 +82,10 @@ function loadStoredSignals(): SignalRecord[] {
               ? item.closePrice
               : undefined,
           status:
-            item.status === 'WIN' || item.status === 'LOSS' || item.status === 'PENDING'
+            item.status === 'WIN' ||
+            item.status === 'LOSS' ||
+            item.status === 'TIE' ||
+            item.status === 'PENDING'
               ? item.status
               : 'PENDING',
           reasons: Array.isArray(item.reasons) ? item.reasons : [],
@@ -83,6 +93,18 @@ function loadStoredSignals(): SignalRecord[] {
             typeof item.decimals === 'number' && Number.isFinite(item.decimals)
               ? item.decimals
               : asset.decimals,
+          entryQuote:
+            typeof item.entryQuote === 'number' && Number.isFinite(item.entryQuote)
+              ? item.entryQuote
+              : undefined,
+          settleSource:
+            typeof item.settleSource === 'string'
+              ? (item.settleSource as MarketDataSource)
+              : undefined,
+          settleQuality:
+            item.settleQuality === 'approximate' || item.settleQuality === 'exact'
+              ? item.settleQuality
+              : undefined,
         };
       });
   } catch {
@@ -211,6 +233,7 @@ export default function App() {
         direction: pred.direction,
         confidence: pred.confidence,
         entryPrice: entry,
+        entryQuote: entry,
         status: 'PENDING',
         reasons: pred.reasons,
         decimals: asset.decimals,
@@ -404,37 +427,56 @@ export default function App() {
       const results = await Promise.all(
         uniqueAssetIds.map(async (id) => {
           const asset = ASSET_MAP[id];
-          if (!asset) return { id, candles: [] as Candle[] };
+          if (!asset)
+            return {
+              id,
+              candles: [] as Candle[],
+              source: undefined as MarketDataSource | undefined,
+            };
           try {
             const feed = await fetchMarketCandles(asset);
             for (let i = 0; i < feed.candles.length - 1; i++) {
               const c = feed.candles[i];
               closedKlinesRef.current[`${id}:${c.time}`] = c;
             }
-            return { id, candles: feed.candles };
+            return { id, candles: feed.candles, source: feed.source };
           } catch {
-            return { id, candles: candlesCacheRef.current[id] ?? [] };
+            return {
+              id,
+              candles: candlesCacheRef.current[id] ?? [],
+              source: sourceCacheRef.current[id],
+            };
           }
         })
       );
 
       const candleMap = new Map(results.map((r) => [r.id, r.candles]));
+      const sourceMap = new Map(results.map((r) => [r.id, r.source]));
 
       // Fetch exact historical bar from Binance if a pending signal is outside the 220-bar window
-      const exactFallbackMap = new Map<string, Candle>();
+      const exactFallbackMap = new Map<string, { candle: Candle; approximate: boolean }>();
       await Promise.all(
         readyToSettle.map(async (sig) => {
           const wsClosed = closedKlinesRef.current[`${sig.assetId}:${sig.candleOpenTime}`];
           if (wsClosed) return;
           const candles = candleMap.get(sig.assetId) ?? candlesCacheRef.current[sig.assetId] ?? [];
-          const found = candles.find((c) => Math.abs(c.time - sig.candleOpenTime) < 30_000);
+          const found = pickExactClosedCandle(
+            candles,
+            sig.candleOpenTime,
+            sig.candleCloseTime,
+            Date.now()
+          );
           if (!found) {
             const asset = ASSET_MAP[sig.assetId];
             if (asset) {
               const fetched = await fetchExactCandleByOpenTime(asset, sig.candleOpenTime);
               if (fetched) {
-                closedKlinesRef.current[`${sig.assetId}:${sig.candleOpenTime}`] = fetched;
-                exactFallbackMap.set(sig.id, fetched);
+                if (sig.assetId === 'EURUSD') {
+                  // EURUSDT بایننس در برابر ورودِ یاهو مبنا دارد → تسویه با برچسب تقریبی
+                  exactFallbackMap.set(sig.id, { candle: fetched, approximate: true });
+                } else {
+                  closedKlinesRef.current[`${sig.assetId}:${sig.candleOpenTime}`] = fetched;
+                }
               }
             }
           }
@@ -446,72 +488,82 @@ export default function App() {
           if (sig.status !== 'PENDING') return sig;
 
           const currentNow = Date.now();
-          const wsClosed =
-            closedKlinesRef.current[`${sig.assetId}:${sig.candleOpenTime}`] ??
-            exactFallbackMap.get(sig.id);
 
-          if (!wsClosed && currentNow < sig.candleCloseTime + 1500) {
+          // گارد سخت: هرگز قبل از بسته‌شدن واقعی کندل هدف تسویه نکن
+          if (currentNow < sig.candleCloseTime) return sig;
+
+          const wsClosed = closedKlinesRef.current[`${sig.assetId}:${sig.candleOpenTime}`];
+          const exactFallback = exactFallbackMap.get(sig.id);
+
+          if (!wsClosed && !exactFallback && currentNow < sig.candleCloseTime + 1500) {
             return sig;
           }
 
-          let settledCandle: Candle | undefined = wsClosed;
-          const candles = candleMap.get(sig.assetId) ?? candlesCacheRef.current[sig.assetId] ?? [];
+          let settledCandle: Candle | undefined;
+          let settleSource: MarketDataSource | undefined;
+          let settleQuality: 'exact' | 'approximate' = 'exact';
 
-          if (!settledCandle && candles.length > 0) {
-            const exactCandle = candles.find(
-              (c) => Math.abs(c.time - sig.candleOpenTime) < 30_000
-            );
-            const hasNewerCandle = candles.some(
-              (c) => c.time >= sig.candleOpenTime + FIVE_MINUTES_MS - 30_000
-            );
+          if (wsClosed) {
+            // کندل بسته‌شده که مستقیماً از استریم WebSocket تایید شده است
+            settledCandle = wsClosed;
+            settleSource = 'binance_vision';
+          } else if (exactFallback) {
+            settledCandle = exactFallback.candle;
+            settleSource = 'binance';
+            settleQuality = exactFallback.approximate ? 'approximate' : 'exact';
+          } else {
+            const candles = candleMap.get(sig.assetId) ?? candlesCacheRef.current[sig.assetId] ?? [];
+            const feedSource = sourceMap.get(sig.assetId) ?? sourceCacheRef.current[sig.assetId];
 
-            if (exactCandle && (hasNewerCandle || currentNow >= sig.candleCloseTime + 3500)) {
-              settledCandle = exactCandle;
-            } else if (!exactCandle && currentNow >= sig.candleCloseTime + 5000) {
-              // Only fallback to nearest candle if within 10 minutes of sig.candleOpenTime
-              const nearest = candles.find(
-                (c) => Math.abs(c.time - sig.candleOpenTime) <= FIVE_MINUTES_MS
-              );
-              if (nearest) {
-                settledCandle = nearest;
+            // دادهٔ ساختگی هرگز نباید عدد تسویه تولید کند — سیگنال PENDING می‌ماند
+            if (feedSource === 'synthetic') return sig;
+
+            const exactClosed = pickExactClosedCandle(
+              candles,
+              sig.candleOpenTime,
+              sig.candleCloseTime,
+              currentNow
+            );
+            if (exactClosed) {
+              settledCandle = exactClosed;
+              settleSource = feedSource;
+              settleQuality = settleQualityForSource(sig.assetId, feedSource);
+            } else if (currentNow >= sig.candleCloseTime + APPROX_SETTLE_DELAY_MS) {
+              // آخرین راه پس از ۱۰ دقیقه: نزدیک‌ترین کندل از نظر زمان، همیشه با برچسب تقریبی
+              const approx = pickApproximateCandle(candles, sig.candleOpenTime);
+              if (approx) {
+                settledCandle = approx;
+                settleSource = feedSource;
+                settleQuality = 'approximate';
               }
             }
           }
 
-          let closePrice: number | undefined = settledCandle?.close;
+          if (!settledCandle) return sig;
+
           let resolvedEntryPrice = sig.entryPrice;
 
           // If this was a next-candle signal, lock entryPrice to the exact candle open price
-          if (
-            settledCandle &&
-            sig.candleOpenTime > sig.issuedAt &&
-            !syncedEntryIdsRef.current.has(sig.id)
-          ) {
+          if (sig.candleOpenTime > sig.issuedAt && !syncedEntryIdsRef.current.has(sig.id)) {
             resolvedEntryPrice = settledCandle.open;
             syncedEntryIdsRef.current.add(sig.id);
           }
 
-          if (closePrice === undefined && currentNow >= sig.candleCloseTime + 8000) {
-            // Last-resort fallback only when offline/synthetic & signal is recent
-            if (currentNow - sig.candleCloseTime < 15 * 60_000) {
-              closePrice =
-                tickersRef.current[sig.assetId]?.price ??
-                liveCandlesRef.current[sig.assetId]?.close;
-            }
-          }
-
-          if (closePrice === undefined) return sig;
-
-          const isWin =
-            sig.direction === 'CALL'
-              ? closePrice > resolvedEntryPrice
-              : closePrice < resolvedEntryPrice;
+          // داوری روی اعدادِ رُند‌شدهٔ نمایش‌دادنی تا جدول هرگز با وضعیت تناقض نداشته باشد
+          const verdict = judgeSignal(
+            sig.direction,
+            resolvedEntryPrice,
+            settledCandle.close,
+            sig.decimals
+          );
 
           return {
             ...sig,
-            entryPrice: resolvedEntryPrice,
-            closePrice,
-            status: isWin ? 'WIN' : 'LOSS',
+            entryPrice: verdict.entryPrice,
+            closePrice: verdict.closePrice,
+            status: verdict.status,
+            settleSource,
+            settleQuality,
           };
         })
       );
@@ -674,34 +726,33 @@ export default function App() {
       prev.map((sig) => {
         if (sig.id !== signalId || sig.status !== 'PENDING') return sig;
 
+        // دقت: تسویهٔ دستی فقط پس از بسته‌شدن واقعی کندل و فقط با کندل دقیق هدف مجاز است
+        if (now < sig.candleCloseTime) return sig;
+
         const exactClosed =
           closedKlinesRef.current[`${sig.assetId}:${sig.candleOpenTime}`] ??
-          (now >= sig.candleCloseTime
-            ? candlesCacheRef.current[sig.assetId]?.find(
-                (c) => Math.abs(c.time - sig.candleOpenTime) < 30_000
-              )
-            : undefined);
+          pickExactClosedCandle(
+            candlesCacheRef.current[sig.assetId] ?? [],
+            sig.candleOpenTime,
+            sig.candleCloseTime,
+            now
+          );
+        if (!exactClosed) return sig; // به‌جای حدس زدن عدد، در انتظار دادهٔ دقیق می‌مانیم
 
-        const resolvedEntry =
-          exactClosed && sig.candleOpenTime > sig.issuedAt && !syncedEntryIdsRef.current.has(sig.id)
-            ? exactClosed.open
-            : sig.entryPrice;
+        let resolvedEntry = sig.entryPrice;
+        if (sig.candleOpenTime > sig.issuedAt && !syncedEntryIdsRef.current.has(sig.id)) {
+          resolvedEntry = exactClosed.open;
+          syncedEntryIdsRef.current.add(sig.id);
+        }
 
-        const closePrice =
-          exactClosed?.close ??
-          tickersRef.current[sig.assetId]?.price ??
-          liveCandlesRef.current[sig.assetId]?.close ??
-          candlesCacheRef.current[sig.assetId]?.slice(-1)[0]?.close;
-        if (closePrice === undefined) return sig;
-        const isWin =
-          sig.direction === 'CALL'
-            ? closePrice > resolvedEntry
-            : closePrice < resolvedEntry;
+        const verdict = judgeSignal(sig.direction, resolvedEntry, exactClosed.close, sig.decimals);
         return {
           ...sig,
-          entryPrice: resolvedEntry,
-          closePrice,
-          status: isWin ? 'WIN' : 'LOSS',
+          entryPrice: verdict.entryPrice,
+          closePrice: verdict.closePrice,
+          status: verdict.status,
+          settleSource: sourceCacheRef.current[sig.assetId],
+          settleQuality: settleQualityForSource(sig.assetId, sourceCacheRef.current[sig.assetId]),
         };
       })
     );

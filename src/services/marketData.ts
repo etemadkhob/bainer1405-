@@ -220,14 +220,13 @@ export async function fetchExactCandleByOpenTime(
   asset: AssetConfig,
   openTimeMs: number
 ): Promise<Candle | null> {
-  if (asset.id === 'EURUSD') {
-    return null;
-  }
-
+  // EURUSD: خوراک یاهو کندل تاریخی دقیق نمی‌دهد؛ از Binance EURUSDT (مبنای نزدیک) استفاده می‌شود.
+  // فراخوان باید نتیجهٔ EURUSD را با برچسب approximate بپذیرد.
   for (const baseUrl of ['https://data-api.binance.vision', 'https://api.binance.com']) {
     try {
+      const symbol = asset.id === 'EURUSD' ? 'EURUSDT' : asset.binanceSymbol;
       const url = `${baseUrl}/api/v3/klines?symbol=${encodeURIComponent(
-        asset.binanceSymbol
+        symbol
       )}&interval=5m&startTime=${openTimeMs}&endTime=${openTimeMs + FIVE_MINUTES_MS - 1}&limit=2`;
       const res = await fetch(url, {
         signal: AbortSignal.timeout(4000),
