@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Minus,
   Trash2,
   TrendingDown,
   TrendingUp,
@@ -37,6 +38,7 @@ export function SignalHistoryTable({
   const winCount = signals.filter((s) => s.status === 'WIN').length;
   const lossCount = signals.filter((s) => s.status === 'LOSS').length;
   const pendingCount = signals.filter((s) => s.status === 'PENDING').length;
+  const tieCount = signals.filter((s) => s.status === 'TIE').length;
 
   return (
     <section
@@ -53,6 +55,12 @@ export function SignalHistoryTable({
               <span className="text-emerald-400">{winCount} برنده</span>
               <span aria-hidden="true">·</span>
               <span className="text-rose-400">{lossCount} بازنده</span>
+              {tieCount > 0 && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-slate-400">{tieCount} برابر</span>
+                </>
+              )}
               {pendingCount > 0 && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -124,17 +132,30 @@ export function SignalHistoryTable({
                       '0'
                     )}`;
 
-                    const entryStr = sig.entryPrice.toLocaleString('en-US', {
-                      minimumFractionDigits: sig.decimals,
-                      maximumFractionDigits: sig.decimals,
-                    });
+                    const fmtPrice = (value: number) =>
+                      value.toLocaleString('en-US', {
+                        minimumFractionDigits: sig.decimals,
+                        maximumFractionDigits: sig.decimals,
+                      });
+                    const entryStr = fmtPrice(sig.entryPrice);
                     const closeStr =
-                      sig.closePrice !== undefined
-                        ? sig.closePrice.toLocaleString('en-US', {
-                            minimumFractionDigits: sig.decimals,
-                            maximumFractionDigits: sig.decimals,
-                          })
-                        : null;
+                      sig.closePrice !== undefined ? fmtPrice(sig.closePrice) : null;
+
+                    // ممیزی شفاف: قیمت لحظهٔ صدور، منبع و کیفیت تسویه در tooltip
+                    const auditBits: string[] = [];
+                    if (sig.entryQuote !== undefined && sig.entryQuote !== sig.entryPrice) {
+                      auditBits.push(`قیمت لحظهٔ صدور: ${fmtPrice(sig.entryQuote)}`);
+                    }
+                    if (sig.settleSource) {
+                      auditBits.push(`منبع تسویه: ${sig.settleSource}`);
+                    }
+                    if (sig.settleQuality === 'approximate') {
+                      auditBits.push('تسویه تقریبی — کندل دقیق هدف در دسترس نبود');
+                    }
+                    const auditTitle =
+                      auditBits.length > 0
+                        ? `${sig.direction === 'CALL' ? 'CALL' : 'PUT'} | ${auditBits.join(' | ')}`
+                        : undefined;
 
                     return (
                       <tr key={sig.id} className="transition-colors hover:bg-slate-800/25">
@@ -165,8 +186,17 @@ export function SignalHistoryTable({
                           {sig.confidence}%
                         </td>
 
-                        <td dir="ltr" className="px-4 py-2.5 text-right font-mono text-slate-200 tabular-nums">
+                        <td
+                          dir="ltr"
+                          title={auditTitle}
+                          className="px-4 py-2.5 text-right font-mono text-slate-200 tabular-nums"
+                        >
                           {closeStr ? `${entryStr} → ${closeStr}` : entryStr}
+                          {sig.settleQuality === 'approximate' && (
+                            <span title="تسویه تقریبی" className="mr-1 text-amber-400">
+                              ≈
+                            </span>
+                          )}
                         </td>
 
                         <td className="px-4 py-2.5">
@@ -204,6 +234,13 @@ export function SignalHistoryTable({
                             <span className="inline-flex items-center gap-1 font-semibold text-rose-400">
                               <XCircle className="h-3.5 w-3.5" />
                               <span>بازنده</span>
+                            </span>
+                          )}
+
+                          {sig.status === 'TIE' && (
+                            <span className="inline-flex items-center gap-1 font-semibold text-slate-300">
+                              <Minus className="h-3.5 w-3.5" />
+                              <span>برابر</span>
                             </span>
                           )}
                         </td>
