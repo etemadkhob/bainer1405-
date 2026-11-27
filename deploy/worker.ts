@@ -1,12 +1,12 @@
 /**
- * Cloudflare Worker — پورت API سرور (server.ts) برای Workers + Assets — v2.0.0
+ * Cloudflare Worker — پورت API سرور (server.ts) برای Workers + Assets — v2.0.1
  *
  * مسیرها:
  *   GET  /api/health                       سلامت + نسخه (+ Turso available)
  *   GET  /api/klines/:assetId?tf=5m|15m|1h کندل‌ها (بایننس→OKX→Bybit)
  *   GET  /api/tickers                      تیکرهای زنده
  *   GET  /api/depth?asset=...              دفتر سفارشات + عدم تعادل ±۲٪ + دیوارها
- *   GET  /api/news                         تقویم اقتصادی (کش ۱۵ دقیقه‌ای edge)
+ *   GET  /api/news                         تقویم اقتصادی (آینهٔ GitHub + کش edge + پشتیبان Turso)
  *   GET  /api/signals?limit=100            تاریخچهٔ سروری (Turso)
  *   POST /api/signals                      upsert دسته‌ای تاریخچه (Turso)
  *   GET  /api/stats                        آمار برد/باخت واقعی سروری (Turso)
@@ -16,6 +16,7 @@
  */
 
 import { createTursoClient, type Env } from './turso';
+import { NEWS_SOURCES, normalizeFfEvents, highImpactEvents, type WireEvent } from './newsfeed';
 
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -387,55 +388,108 @@ function analyzeBook(book: DepthBook): {
 }
 
 // ---------------------------------------------------------------------------
-// تقویم اقتصادی — کش ۱۵ دقیقه‌ای روی edge
+// تقویم اقتصادی — کش ۱۵ دقیقه‌ای روی edge + پشتیبان Turso (v2.0.1)
+// منبع اول: آینهٔ GitHub (از edge قابل واکشی) · بعد nfs و cdn-nfs
+// اگر هر سه منبع در دسترس نبودند، آخرین تقویم ذخیره‌شده در Turso
+// (تا ۲۴ ساعت) برگردانده می‌شود تا گیت خبر کور نشود.
 // ---------------------------------------------------------------------------
 interface NewsCache {
   at: number;
-  events: Array<{ title: string; currency: string; impact: string; time: number }>;
+  events: WireEvent[];
+  stale?: boolean;
 }
 let newsCache: NewsCache | null = null;
 const NEWS_TTL_MS = 15 * 60 * 1000;
+const NEWS_TURSO_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 let newsDiag: string[] = [];
+/** وضعیت آخرین پایش Turso — در diag درخواست بعدی گزارش می‌شود */
+let lastNewsPersist: { at: number; ok: boolean } | null = null;
 
-async function fetchNewsCalendar(): Promise<NewsCache['events']> {
+async function persistNewsToTurso(env: Env, events: WireEvent[]): Promise<void> {
+  try {
+    const db = createTursoClient(env);
+    if (!db.available) return;
+    await db.batch([
+      {
+        sql: `CREATE TABLE IF NOT EXISTS news_cache (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                fetched_at INTEGER NOT NULL,
+                payload TEXT NOT NULL
+              )`,
+      },
+      {
+        sql: `INSERT OR REPLACE INTO news_cache (id, fetched_at, payload)
+              VALUES (1, ?, ?)`,
+        args: [Date.now(), JSON.stringify(events.slice(0, 300))],
+      },
+    ]);
+    lastNewsPersist = { at: Date.now(), ok: true };
+  } catch {
+    lastNewsPersist = { at: Date.now(), ok: false };
+    newsDiag.push('turso-news:PERSIST_ERR');
+  }
+}
+
+async function loadNewsFromTurso(env: Env): Promise<WireEvent[] | null> {
+  try {
+    const db = createTursoClient(env);
+    if (!db.available) return null;
+    await db.execute(
+      `CREATE TABLE IF NOT EXISTS news_cache (
+         id INTEGER PRIMARY KEY CHECK (id = 1),
+         fetched_at INTEGER NOT NULL,
+         payload TEXT NOT NULL
+       )`
+    );
+    const result = await db.execute(
+      `SELECT fetched_at, payload FROM news_cache WHERE id = 1 LIMIT 1`
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const fetchedAt = Number(row.fetched_at);
+    if (!Number.isFinite(fetchedAt) || Date.now() - fetchedAt > NEWS_TURSO_MAX_AGE_MS) {
+      newsDiag.push('turso-news:STALE_SKIP');
+      return null;
+    }
+    const parsed = JSON.parse(String(row.payload)) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    newsDiag.push(`turso-news:HIT(age=${Math.round((Date.now() - fetchedAt) / 60000)}m)`);
+    return parsed as WireEvent[];
+  } catch {
+    newsDiag.push('turso-news:LOAD_ERR');
+    return null;
+  }
+}
+
+async function fetchNewsCalendar(env: Env, ctx?: ExecutionContext): Promise<NewsCache['events']> {
   if (newsCache && Date.now() - newsCache.at < NEWS_TTL_MS) return newsCache.events;
-  const endpoints = [
-    'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
-    'https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json',
-  ];
-  for (const url of endpoints) {
+  for (const url of NEWS_SOURCES) {
     try {
       const res = await fetch(url, {
-        headers: { Accept: 'application/json', 'User-Agent': 'QuantOracle/2.0' },
+        headers: { Accept: 'application/json', 'User-Agent': 'QuantOracle/2.0.1' },
         signal: AbortSignal.timeout(6000),
       });
       newsDiag.push(`${new URL(url).host}:${res.status}`);
       if (!res.ok) continue;
-      const rows = (await res.json()) as Array<{
-        title?: string;
-        country?: string;
-        currency?: string;
-        date?: string;
-        impact?: string;
-      }>;
+      const rows = (await res.json()) as unknown;
       if (!Array.isArray(rows)) continue;
-      const events: NewsCache['events'] = [];
-      for (const row of rows) {
-        const t = row.date ? Date.parse(row.date) : NaN;
-        if (!Number.isFinite(t)) continue;
-        events.push({
-          title: String(row.title ?? 'رویداد اقتصادی'),
-          currency: String(row.currency ?? row.country ?? ''),
-          impact: String(row.impact ?? ''),
-          time: t,
-        });
-      }
+      const events = normalizeFfEvents(rows);
+      if (events.length === 0) continue;
       newsCache = { at: Date.now(), events };
+      // نکتهٔ مهم: بدون ctx.waitUntil، پرامیس شناور بعد از برگشت پاسخ
+      // توسط runtime ورکرها قطع می‌شود — پایش Turso هرگز کامل نمی‌شد.
+      if (ctx) ctx.waitUntil(persistNewsToTurso(env, events));
       return events;
-    } catch (e) {
+    } catch {
       newsDiag.push(`${new URL(url).host}:ERR`);
       // endpoint بعدی
     }
+  }
+  // همهٔ منابع ناموفق — پشتیبان Turso
+  const cached = await loadNewsFromTurso(env);
+  if (cached && cached.length > 0) {
+    newsCache = { at: Date.now() - (NEWS_TTL_MS - 5 * 60 * 1000), events: cached, stale: true };
+    return cached;
   }
   return [];
 }
@@ -581,7 +635,7 @@ async function getStats(env: Env): Promise<Response> {
 // Router
 // ---------------------------------------------------------------------------
 const worker: Handler = {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') return preflight();
@@ -663,14 +717,32 @@ const worker: Handler = {
     }
 
     if (url.pathname === '/api/news') {
+      newsDiag = [];
       try {
-        const events = await fetchNewsCalendar();
-        const high = events.filter((e) => e.impact.toLowerCase() === 'high');
+        // تشخیصی: force=turso — مسیر پشتیبان را بدون توجه به کش edge می‌سنجد
+        if (url.searchParams.get('force') === 'turso') {
+          const fallback = await loadNewsFromTurso(env);
+          const highFb = highImpactEvents(fallback ?? []);
+          return json({
+            available: !!fallback && fallback.length > 0,
+            stale: true,
+            source: 'turso-fallback',
+            events: (fallback ?? []).slice(0, 60),
+            highCount: highFb.length,
+            diag: [...newsDiag],
+          });
+        }
+        const events = await fetchNewsCalendar(env, ctx);
+        const high = highImpactEvents(events);
         return json({
           available: events.length > 0,
+          stale: newsCache?.stale === true,
           events: events.slice(0, 60),
           highCount: high.length,
-          diag: url.searchParams.get('debug') === '1' ? newsDiag : undefined,
+          diag:
+            url.searchParams.get('debug') === '1'
+              ? [...newsDiag, ...(lastNewsPersist ? [`turso-news:LAST=${lastNewsPersist.ok ? 'OK' : 'ERR'}`] : [])]
+              : undefined,
         });
       } catch (e) {
         return json({ available: false, error: (e as Error).message });
@@ -695,7 +767,7 @@ const worker: Handler = {
       return json({
         ok: true,
         service: 'quant-oracle',
-        version: '2.0.0',
+        version: '2.0.1',
         db: db.available,
         gates: [
           'circuit-breaker', 'news-blocker', 'btc-shock', 'mtf-ema50-200',
