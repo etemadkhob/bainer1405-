@@ -1,4 +1,16 @@
-import { Activity, Clock, Cloud, CloudOff, Gauge, Volume2, VolumeX, Wifi } from 'lucide-react';
+import { Activity, Clock, Cloud, CloudOff, TrendingUp, Volume2, VolumeX, Wifi } from 'lucide-react';
+
+/**
+ * Header — تک‌خطی (v2.1.2)
+ *
+ * قانون چیدمان: هرگز نمی‌شکند (flex-nowrap)؛ آیتم‌ها به‌ترتیب اهمیت و
+ * در عرض کم «پنهان» می‌شوند نه «رفتن به خط بعد»:
+ *   همیشه: برند · زنده/تأخیر · دکمهٔ صدا
+ *   ≥ md:  ابر (+ برد سروری) · سشن
+ *   ≥ lg:  نرخ برد محلی
+ * جزئیات هر آیتم در tooltip (title) است — نه متن روی صفحه.
+ * بدون تکرار: برد سروری فقط داخل چیپ ابر، نام کامل سشن فقط tooltip.
+ */
 
 interface HeaderProps {
   sessionName: string;
@@ -14,6 +26,8 @@ interface HeaderProps {
   onToggleSound: () => void;
 }
 
+const CHIP = 'flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs';
+
 export function Header({
   sessionName,
   isOptimalSession,
@@ -27,154 +41,113 @@ export function Header({
   serverSettled,
   onToggleSound,
 }: HeaderProps) {
+  const latencyColor =
+    streamLatencyMs === null ? 'text-slate-500' : streamLatencyMs <= 100 ? 'text-emerald-400' : 'text-amber-400';
+  // برد مؤثر — اولویت با سروری؛ هرگز دو عدد هم‌زمان نمایش داده نمی‌شود
+  const effWr = serverWinRate ?? winRate;
+  const effCnt = serverSettled > 0 ? serverSettled : settledCount;
+  const effSrc = serverWinRate !== null ? 'نرخ برد سروری (Turso)' : 'نرخ برد محلی';
+  const wrColor =
+    effWr === null
+      ? 'text-slate-400'
+      : effWr >= 60
+      ? 'text-emerald-400'
+      : effWr >= 50
+      ? 'text-amber-400'
+      : 'text-rose-400';
+
   return (
     <header className="border-b border-[#1E293B] bg-[#090D16]/90 backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
-        {/* Brand Zone */}
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
-            <Activity className="h-5 w-5" />
+      {/* h-14 + flex-nowrap = تضمین یک خط */}
+      <div className="mx-auto flex h-14 max-w-[1440px] flex-nowrap items-center gap-3 px-4 sm:px-6">
+        {/* برند — همیشه کامل ولی کوتاه */}
+        <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+            <Activity className="h-4 w-4" />
           </div>
-          <h1 className="whitespace-nowrap text-base font-bold tracking-tight text-slate-100 sm:text-lg">
-            اوراکل کوانت | پیش‌بینی ۵ دقیقه‌ای
-          </h1>
+          <h1 className="whitespace-nowrap text-base font-bold tracking-tight text-slate-100">اوراکل کوانت</h1>
+          <span className="hidden whitespace-nowrap rounded-md border border-[#1E293B] bg-[#111827]/80 px-2 py-0.5 text-[11px] font-medium text-slate-400 md:inline">
+            پیش‌بینی ۵ دقیقه‌ای
+          </span>
         </div>
 
-        {/* Telemetry & Controls */}
-        <div className="flex flex-wrap items-center gap-4 sm:gap-5">
-          {/* Live Stream Status */}
-          <div className="flex items-center gap-1.5 text-xs">
-            <Wifi
-              className={`h-3.5 w-3.5 shrink-0 ${
-                wsConnected ? 'text-emerald-400' : 'text-amber-400'
-              }`}
-            />
-            <span className={wsConnected ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
-              {wsConnected ? 'داده زنده آنلاین' : 'همگام‌سازی سرور'}
-            </span>
-          </div>
+        <div className="hidden h-5 w-px shrink-0 bg-[#1E293B] lg:block" aria-hidden="true" />
 
-          <div className="hidden h-4 w-px bg-[#1E293B] sm:block" aria-hidden="true" />
-
-          {/* Stream Latency (زیر ۱۰۰ms هدف) */}
+        {/* تله‌متری — یک گروه، بدون شکستن */}
+        <div className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-x-3 gap-y-0 overflow-hidden sm:gap-x-4">
+          {/* زنده + تأخیر — ادغام دو چیپ قبلی */}
           <div
-            title="تأخیر استریم WebSocket بایننس (میانگین متحرک)"
-            className="flex items-center gap-1 text-xs"
+            title={`استریم زندهٔ بایننس — تأخیر هدف زیر ۱۰۰ms (میانگین متحرک)${wsConnected ? '' : ' — در حال همگام‌سازی'}`}
+            className={CHIP}
           >
-            <Gauge
-              className={`h-3.5 w-3.5 shrink-0 ${
-                streamLatencyMs === null
-                  ? 'text-slate-500'
-                  : streamLatencyMs <= 100
-                  ? 'text-emerald-400'
-                  : 'text-amber-400'
-              }`}
-            />
-            <span className="text-slate-400">تأخیر:</span>
-            <span
-              dir="ltr"
-              className={`font-mono font-medium tabular-nums ${
-                streamLatencyMs === null
-                  ? 'text-slate-500'
-                  : streamLatencyMs <= 100
-                  ? 'text-emerald-400'
-                  : 'text-amber-400'
-              }`}
-            >
+            <Wifi className={`h-3.5 w-3.5 shrink-0 ${wsConnected ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span className={wsConnected ? 'font-medium text-emerald-400' : 'font-medium text-amber-400'}>
+              {wsConnected ? 'زنده' : 'همگام‌سازی'}
+            </span>
+            <span dir="ltr" className={`font-mono font-medium tabular-nums ${latencyColor}`}>
               {streamLatencyMs === null ? '—' : `${streamLatencyMs}ms`}
             </span>
           </div>
 
-          <div className="hidden h-4 w-px bg-[#1E293B] sm:block" aria-hidden="true" />
-
-          {/* Cloud History Sync (دیتابیس سروری Turso) */}
+          {/* ابر — فقط وضعیت همگام‌سازی؛ جزئیات در tooltip (≥ md) */}
           <div
             title={
               cloudAvailable
-                ? `تاریخچهٔ سروری فعال${serverSettled > 0 ? ` — ${serverSettled} معاملهٔ تسویه‌شده${serverWinRate !== null ? ` · نرخ برد ${serverWinRate.toFixed(1)}٪` : ''}` : ''}`
+                ? `تاریخچهٔ سروری Turso فعال${serverSettled > 0 ? ` — ${serverSettled} معاملهٔ تسویه‌شده${serverWinRate !== null ? ` · نرخ برد ${serverWinRate.toFixed(1)}٪` : ''}` : ''}`
                 : 'ذخیرهٔ محلی (دیتابیس سروری در دسترس نیست)'
             }
-            className="flex items-center gap-1.5 text-xs"
+            className={`${CHIP} hidden md:flex`}
           >
             {cloudAvailable ? (
               <Cloud className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
             ) : (
               <CloudOff className="h-3.5 w-3.5 shrink-0 text-slate-500" />
             )}
-            <span className={cloudAvailable ? 'text-emerald-400 font-medium' : 'text-slate-500'}>
-              {cloudAvailable ? 'همگام با ابر' : 'ذخیره محلی'}
+            <span className={cloudAvailable ? 'font-medium text-emerald-400' : 'text-slate-500'}>
+              {cloudAvailable ? 'ابر' : 'محلی'}
             </span>
-            {cloudAvailable && serverWinRate !== null && (
-              <span dir="ltr" className="hidden font-mono text-[11px] text-slate-400 tabular-nums xl:inline">
-                {serverWinRate.toFixed(1)}%
-              </span>
-            )}
           </div>
 
-          <div className="hidden h-4 w-px bg-[#1E293B] sm:block" aria-hidden="true" />
+          {/* سشن — بدون کلمهٔ اضافهٔ «سشن:» و بدون تکرار نام (≥ md) */}
+          <div
+            title={`سشن معاملاتی: ${sessionName}${isOptimalSession ? '' : ' — جریمهٔ نقدینگی بازار آسیا'}`}
+            className={`${CHIP} hidden md:flex`}
+          >
+            <Clock className={`h-3.5 w-3.5 shrink-0 ${isOptimalSession ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span className={`font-medium ${isOptimalSession ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {isOptimalSession ? 'لندن/نیویورک' : 'آسیا'}
+            </span>
+          </div>
 
-          {/* Live Session Status */}
-          <div className="flex items-center gap-2 text-xs sm:text-sm">
-            <Clock
-              className={`h-4 w-4 shrink-0 ${
-                isOptimalSession ? 'text-emerald-400' : 'text-amber-400'
+          {/* نرخ برد — فقط یک‌جا (≥ lg) */}
+          <div
+            title={`${effSrc}${effCnt > 0 ? ` — ${effCnt} معاملهٔ تسویه‌شده` : ' — هنوز معامله‌ای تسویه نشده'}`}
+            className={`${CHIP} hidden lg:flex`}
+          >
+            <TrendingUp
+              className={`h-3.5 w-3.5 shrink-0 ${
+                effWr === null ? 'text-slate-500' : effWr >= 60 ? 'text-emerald-400' : effWr >= 50 ? 'text-amber-400' : 'text-rose-400'
               }`}
             />
-            <span className="text-slate-400">سشن:</span>
-            <span
-              className={`whitespace-nowrap font-medium ${
-                isOptimalSession ? 'text-emerald-400' : 'text-amber-400'
-              }`}
-            >
-              {isOptimalSession ? 'لندن / نیویورک' : 'آسیا (جریمه نقدینگی)'}
+            <span dir="ltr" className={`font-mono font-semibold tabular-nums ${wrColor}`}>
+              {effWr === null ? '—' : `${effWr.toFixed(1)}%`}
             </span>
-            <span className="hidden text-slate-600 xl:inline" aria-hidden="true">
-              ·
-            </span>
-            <span className="hidden text-xs text-slate-400 xl:inline">{sessionName}</span>
+            {effCnt > 0 && <span className="text-slate-500 tabular-nums">({effCnt})</span>}
           </div>
 
-          <div className="hidden h-4 w-px bg-[#1E293B] sm:block" aria-hidden="true" />
-
-          {/* Live Win-Rate */}
-          <div className="flex items-center gap-2 text-xs sm:text-sm">
-            <span className="text-slate-400">نرخ برد:</span>
-            <span
-              dir="ltr"
-              className={`font-mono font-semibold tabular-nums ${
-                winRate === null
-                  ? 'text-slate-300'
-                  : winRate >= 60
-                  ? 'text-emerald-400'
-                  : winRate >= 50
-                  ? 'text-amber-400'
-                  : 'text-rose-400'
-              }`}
-            >
-              {winRate === null ? '—' : `${winRate.toFixed(1)}%`}
-            </span>
-            {settledCount > 0 && (
-              <span className="text-xs text-slate-500 tabular-nums">({settledCount} معامله)</span>
-            )}
-          </div>
-
-          {/* Sound Toggle Action */}
+          {/* صدا — فقط آیکنی با tooltip */}
           <button
             type="button"
             onClick={onToggleSound}
+            title={soundEnabled ? 'صدای هشدار فعال است — برای قطع کلیک کنید' : 'بی‌صدا — برای فعال‌سازی کلیک کنید'}
             aria-label={soundEnabled ? 'قطع صدای هشدار' : 'فعال‌سازی صدای هشدار'}
-            className={`inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
               soundEnabled
                 ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15'
                 : 'border-[#1E293B] bg-[#111827]/80 text-slate-400 hover:border-slate-700 hover:text-slate-200'
             }`}
           >
-            {soundEnabled ? (
-              <Volume2 className="h-4 w-4 shrink-0" />
-            ) : (
-              <VolumeX className="h-4 w-4 shrink-0" />
-            )}
-            <span>{soundEnabled ? 'صدای هشدار فعال' : 'بی‌صدا'}</span>
+            {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </button>
         </div>
       </div>
