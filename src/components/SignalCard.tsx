@@ -27,6 +27,8 @@ const SOURCE_LABELS: Record<MarketDataSource, string> = {
   binance_ws: 'بایننس زنده (WebSocket)',
   binance_vision: 'بایننس آنلاین (Vision)',
   binance: 'بایننس اسپات (زنده)',
+  okx: 'اوکی‌ایکس (پشتیبان)',
+  bybit: 'بای‌بیت (پشتیبان)',
   yahoo_fx: 'نرخ زنده فارکس (Yahoo FX)',
   cryptocompare: 'کریپتوکامپر (پشتیبان)',
   synthetic: 'شبیه‌ساز آفلاین',

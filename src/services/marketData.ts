@@ -130,6 +130,83 @@ async function fetchFromBinanceEndpoint(
   }));
 }
 
+async function fetchFromOkx(asset: AssetConfig): Promise<Candle[]> {
+  // OKX منبع پشتیبان پس از بایننس است (در ایران/برخی شبکه‌ها بایننس بلاک است؛
+  // مبنای OKX کمی متفاوت است → تسویه با آن «approximate» برچسب می‌خورد)
+  const instId = `${asset.binanceSymbol.replace(/USDT$/, '')}-USDT`;
+  const url = `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(
+    instId
+  )}&bar=5m&limit=220`;
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(4500),
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`OKX HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    code?: string;
+    data?: Array<[string, string, string, string, string, string, string, string, string]>;
+  };
+
+  const rows = payload?.data;
+  if (payload?.code !== '0' || !Array.isArray(rows) || rows.length < 30) {
+    throw new Error('Insufficient OKX bars');
+  }
+
+  // OKX: نزولی (جدیدترین اول) + ستون آخر confirm (1 = بسته‌شده)
+  return rows
+    .map((row) => ({
+      time: Number(row[0]),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
+      close: Number(row[4]),
+      volume: Number(row[5]),
+    }))
+    .reverse();
+}
+
+async function fetchFromBybit(asset: AssetConfig): Promise<Candle[]> {
+  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${encodeURIComponent(
+    asset.binanceSymbol
+  )}&interval=5&limit=220`;
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(4500),
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Bybit HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    retCode?: number;
+    result?: { list?: Array<[string, string, string, string, string, string, string]> };
+  };
+
+  const rows = payload?.result?.list;
+  if (payload?.retCode !== 0 || !Array.isArray(rows) || rows.length < 30) {
+    throw new Error('Insufficient Bybit bars');
+  }
+
+  // Bybit: نزولی (جدیدترین اول) → صعودی؛ [startTime, open, high, low, close, volume, turnover]
+  return rows
+    .map((row) => ({
+      time: Number(row[0]),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
+      close: Number(row[4]),
+      volume: Number(row[5]),
+    }))
+    .reverse();
+}
+
 async function fetchFromCryptoCompare(asset: AssetConfig): Promise<Candle[]> {
   const url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=${encodeURIComponent(
     asset.ccFsym
@@ -198,6 +275,20 @@ export async function fetchMarketCandles(asset: AssetConfig): Promise<MarketFeed
       asset.binanceSymbol
     );
     return { candles, source: 'binance', fetchedAt };
+  } catch {
+    // Try CryptoCompare
+  }
+
+  try {
+    const candles = await fetchFromOkx(asset);
+    return { candles, source: 'okx', fetchedAt };
+  } catch {
+    // Try Bybit
+  }
+
+  try {
+    const candles = await fetchFromBybit(asset);
+    return { candles, source: 'bybit', fetchedAt };
   } catch {
     // Try CryptoCompare
   }

@@ -46,6 +46,8 @@ export type MarketDataSource =
   | 'binance_ws'
   | 'binance_vision'
   | 'binance'
+  | 'okx'
+  | 'bybit'
   | 'yahoo_fx'
   | 'cryptocompare'
   | 'synthetic';
