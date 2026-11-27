@@ -130,6 +130,83 @@ async function fetchFromBinanceEndpoint(
   }));
 }
 
+async function fetchFromOkx(asset: AssetConfig): Promise<Candle[]> {
+  // OKX منبع پشتیبان پس از بایننس است (در ایران/برخی شبکه‌ها بایننس بلاک است؛
+  // مبنای OKX کمی متفاوت است → تسویه با آن «approximate» برچسب می‌خورد)
+  const instId = `${asset.binanceSymbol.replace(/USDT$/, '')}-USDT`;
+  const url = `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(
+    instId
+  )}&bar=5m&limit=220`;
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(4500),
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`OKX HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    code?: string;
+    data?: Array<[string, string, string, string, string, string, string, string, string]>;
+  };
+
+  const rows = payload?.data;
+  if (payload?.code !== '0' || !Array.isArray(rows) || rows.length < 30) {
+    throw new Error('Insufficient OKX bars');
+  }
+
+  // OKX: نزولی (جدیدترین اول) + ستون آخر confirm (1 = بسته‌شده)
+  return rows
+    .map((row) => ({
+      time: Number(row[0]),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
+      close: Number(row[4]),
+      volume: Number(row[5]),
+    }))
+    .reverse();
+}
+
+async function fetchFromBybit(asset: AssetConfig): Promise<Candle[]> {
+  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${encodeURIComponent(
+    asset.binanceSymbol
+  )}&interval=5&limit=220`;
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(4500),
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Bybit HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    retCode?: number;
+    result?: { list?: Array<[string, string, string, string, string, string, string]> };
+  };
+
+  const rows = payload?.result?.list;
+  if (payload?.retCode !== 0 || !Array.isArray(rows) || rows.length < 30) {
+    throw new Error('Insufficient Bybit bars');
+  }
+
+  // Bybit: نزولی (جدیدترین اول) → صعودی؛ [startTime, open, high, low, close, volume, turnover]
+  return rows
+    .map((row) => ({
+      time: Number(row[0]),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
+      close: Number(row[4]),
+      volume: Number(row[5]),
+    }))
+    .reverse();
+}
+
 async function fetchFromCryptoCompare(asset: AssetConfig): Promise<Candle[]> {
   const url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=${encodeURIComponent(
     asset.ccFsym
@@ -203,6 +280,20 @@ export async function fetchMarketCandles(asset: AssetConfig): Promise<MarketFeed
   }
 
   try {
+    const candles = await fetchFromOkx(asset);
+    return { candles, source: 'okx', fetchedAt };
+  } catch {
+    // Try Bybit
+  }
+
+  try {
+    const candles = await fetchFromBybit(asset);
+    return { candles, source: 'bybit', fetchedAt };
+  } catch {
+    // Try CryptoCompare
+  }
+
+  try {
     const candles = await fetchFromCryptoCompare(asset);
     return { candles, source: 'cryptocompare', fetchedAt };
   } catch {
@@ -220,14 +311,13 @@ export async function fetchExactCandleByOpenTime(
   asset: AssetConfig,
   openTimeMs: number
 ): Promise<Candle | null> {
-  if (asset.id === 'EURUSD') {
-    return null;
-  }
-
+  // EURUSD: خوراک یاهو کندل تاریخی دقیق نمی‌دهد؛ از Binance EURUSDT (مبنای نزدیک) استفاده می‌شود.
+  // فراخوان باید نتیجهٔ EURUSD را با برچسب approximate بپذیرد.
   for (const baseUrl of ['https://data-api.binance.vision', 'https://api.binance.com']) {
     try {
+      const symbol = asset.id === 'EURUSD' ? 'EURUSDT' : asset.binanceSymbol;
       const url = `${baseUrl}/api/v3/klines?symbol=${encodeURIComponent(
-        asset.binanceSymbol
+        symbol
       )}&interval=5m&startTime=${openTimeMs}&endTime=${openTimeMs + FIVE_MINUTES_MS - 1}&limit=2`;
       const res = await fetch(url, {
         signal: AbortSignal.timeout(4000),
@@ -314,4 +404,39 @@ export async function fetchLiveTickers(): Promise<ServerTickerMap['tickers']> {
   }
 
   return {};
+}
+
+// ---------------------------------------------------------------------------
+// تایم‌فریم‌های بالاتر (15m / 1h) برای فیلتر مولتی‌تایم‌فریم — کش ۵ دقیقه‌ای
+// ---------------------------------------------------------------------------
+export interface HigherTimeframes {
+  candles15m?: Candle[];
+  candles1h?: Candle[];
+}
+
+const HTF_TTL_MS = 5 * 60 * 1000;
+const htfCache: Partial<Record<AssetId, { at: number; value: HigherTimeframes }>> = {};
+
+export async function fetchHigherTimeframes(assetId: AssetId): Promise<HigherTimeframes> {
+  const cached = htfCache[assetId];
+  if (cached && Date.now() - cached.at < HTF_TTL_MS) return cached.value;
+
+  const load = async (tf: '15m' | '1h'): Promise<Candle[] | undefined> => {
+    try {
+      const res = await fetch(`/api/klines/${encodeURIComponent(assetId)}?tf=${tf}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return undefined;
+      const payload = (await res.json()) as { candles?: Candle[] };
+      const candles = payload.candles;
+      return Array.isArray(candles) && candles.length >= 60 ? candles : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const [c15, c1h] = await Promise.all([load('15m'), load('1h')]);
+  const value: HigherTimeframes = { candles15m: c15, candles1h: c1h };
+  htfCache[assetId] = { at: Date.now(), value };
+  return value;
 }

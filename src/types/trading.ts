@@ -46,6 +46,8 @@ export type MarketDataSource =
   | 'binance_ws'
   | 'binance_vision'
   | 'binance'
+  | 'okx'
+  | 'bybit'
   | 'yahoo_fx'
   | 'cryptocompare'
   | 'synthetic';
@@ -97,7 +99,10 @@ export interface QuantPrediction {
   isOfficialTrigger: boolean;
 }
 
-export type SignalStatus = 'PENDING' | 'WIN' | 'LOSS';
+export type SignalStatus = 'PENDING' | 'WIN' | 'LOSS' | 'TIE';
+
+/** کیفیت تسویه: exact = کندل دقیق هدف، approximate = نزدیک‌ترین کندل با برچسب */
+export type SettleQuality = 'exact' | 'approximate';
 
 export interface SignalRecord {
   id: string;
@@ -109,8 +114,14 @@ export interface SignalRecord {
   direction: 'CALL' | 'PUT';
   confidence: number;
   entryPrice: number;
+  /** قیمت نمایش‌داده‌شده در لحظهٔ صدور سیگنال (برای ممیزی؛ قبل از قفل شدن به open کندل هدف) */
+  entryQuote?: number;
   closePrice?: number;
   status: SignalStatus;
   reasons: string[];
   decimals: number;
+  /** منبع داده‌ای که این سیگنال با آن تسویه شده است */
+  settleSource?: MarketDataSource;
+  /** کیفیت تسویه؛ approximate باید در جدول با برچسب «تسویه تقریبی» نمایش داده شود */
+  settleQuality?: SettleQuality;
 }

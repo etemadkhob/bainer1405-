@@ -56,3 +56,39 @@ export function playSignalChime(direction: 'CALL' | 'PUT'): void {
     // Gracefully ignore audio errors in restricted environments
   }
 }
+
+/**
+ * زنگ ملایمِ یادآور استراحت/بازبینی — کاملاً متمایز از چایم سیگنال:
+ * دو نُت آرامِ C6 → G5 با گین کمتر تا با صدای CALL/PUT اشتباه نشود.
+ */
+export function playReminderChime(): void {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const notes = [1046.5, 783.99]; // C6 -> G5 soft two-tone
+
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const start = now + idx * 0.22;
+      const duration = 0.5;
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, start);
+
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.06, start + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(start);
+      osc.stop(start + duration + 0.05);
+    });
+  } catch {
+    // Gracefully ignore audio errors in restricted environments
+  }
+}
