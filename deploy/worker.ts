@@ -1,5 +1,5 @@
 /**
- * Cloudflare Worker — پورت API سرور (server.ts) برای Workers + Assets — v2.0.1
+ * Cloudflare Worker — پورت API سرور (server.ts) برای Workers + Assets — v2.1.1
  *
  * مسیرها:
  *   GET  /api/health                       سلامت + نسخه (+ Turso available)
@@ -469,7 +469,7 @@ async function fetchNewsCalendar(env: Env, ctx?: ExecutionContext): Promise<News
   for (const url of NEWS_SOURCES) {
     try {
       const res = await fetch(url, {
-        headers: { Accept: 'application/json', 'User-Agent': 'QuantOracle/2.0.1' },
+        headers: { Accept: 'application/json', 'User-Agent': 'QuantOracle/2.1.1' },
         signal: AbortSignal.timeout(6000),
       });
       newsDiag.push(`${new URL(url).host}:${res.status}`);
@@ -770,7 +770,7 @@ const worker: Handler = {
       return json({
         ok: true,
         service: 'quant-oracle',
-        version: '2.0.1',
+        version: '2.1.1',
         db: db.available,
         gates: [
           'circuit-breaker', 'news-blocker', 'btc-shock', 'mtf-ema50-200',

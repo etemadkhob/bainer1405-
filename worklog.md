@@ -213,3 +213,38 @@
 | گیت ±۱۵ دقیقه | 🟢 | ۱۶ سنجش مرزی با `newsBlockFor` واقعی — 17 PASS |
 | عدم رگرسیون | 🟢 | 50+31+23 PASS و tsc/build تمیز |
 | آخرین 🟡 جدول v2.0.0 | 🟢 → بسته شد | همین فصل |
+
+---
+
+# worklog — v2.1.1 (تثبیت آدرس اصلی bainri-apshn-koi-2)
+
+**تاریخ:** 2026-11-27 · **مهارت غالب:** build-studio · **درخواست:** «چرا آدرس اصلی را تغییر دادی؟ گفتم آدرس اصلی را ارتقا بده نه آدرس جدید ایجاد کن»
+
+## خطا و اصلاح
+| بند | شرح |
+|---|---|
+| خطای رخ‌داده | استقرارهای v1.1.0→v2.0.1 با نام `bainer1405-quant-oracle` در wrangler.jsonc انجام شده بود و یک **آدرس جدید** ساخته بود؛ در حالی که طبق الزام پروژه، آدرس کانونی همان `bainri-apshn-koi-2.hamid-khobee1.workers.dev` است (حتی دیتابیس Turso با همین نام است: `bainri-apshn-koi-2-etemadshomal2-ux`) |
+| اصلاح | `wrangler.jsonc` → `name: bainri-apshn-koi-2` · deploy روی همان آدرس اصلی · ست مجدد secrets Turso روی همان ورکر |
+| پاک‌سازی | ورکر تکراری `bainer1405-quant-oracle` با REST API حذف شد → آدرس آن حالا 404 است و فقط **یک آدرس** باقی است |
+| شمارهٔ نسخه | روی آدرس اصلی، پایهٔ قبلی «2.1.0» زنده بود؛ برای حفظ یکنوایی نسخه، نسخهٔ تثبیت‌شده = **2.1.1** (سوپرست همهٔ خطوط قبلی: ۱۳ گیت + گیت خبر + تایمرها + تاریخچهٔ ابری) |
+
+## شواهد اجرا (زنده — همه روی آدرس اصلی)
+- health → `{ok:true, service:"quant-oracle", version:"2.1.1", db:true, gates:[13]}`
+- `/api/news` → `available:true, highCount:5, diag:["raw.githubusercontent.com:200"]`
+- `/api/news?force=turso` → `{source:"turso-fallback", available:true, highCount:5}` — پشتیبان روی همان ورکر
+- `/api/signals` → `available:true` · `/api/stats` → `available:true` · SPA root → 200
+- حذف آدرس اضافه: `DELETE /workers/services/bainer1405-quant-oracle` → `success:true` و سپس 404
+- Version ID کانونی: `8f89da14`
+- بستهٔ کانونی: `bainri-apshn-koi-2-v2.1.1-2026-11-27.zip`
+
+## noQA
+- محتوای قبلی آدرس اصلی (ساخت اولیهٔ 10:18 صبح) با deploy جدید جایگزین شد — همهٔ قابلیت‌های آن در این نسخه هست (تایمرها/فیلترها/ابری).
+- secrets فقط روی ورکر کانونی ست می‌شوند؛ ورکر حذف‌شده چیزی از دست نداد که جایگزین داشته باشد.
+
+## جدول صداقت
+| ادعا | وضعیت | شاهد |
+|---|---|---|
+| آدرس اصلی = آخرین نسخه | 🟢 | health 2.1.1 روی bainri-apshn-koi-2.hamid-khobee1.workers.dev |
+| فقط یک آدرس | 🟢 | ورکر اضافه حذف شد → 404 |
+| Turso همان دیتابیس کانونی | 🟢 | signals/stats/news_cache سبز روی همان آدرس |
+| گیت خبر | 🟢 | highCount=5 + fallback HIT روی آدرس اصلی |

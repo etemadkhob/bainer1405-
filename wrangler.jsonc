@@ -1,7 +1,7 @@
 {
   // Cloudflare Workers + Static Assets (SPA) — بدون کلید مخفی
   // استقرار: npm run build && npx wrangler deploy
-  "name": "bainer1405-quant-oracle",
+  "name": "bainri-apshn-koi-2",
   "compatibility_date": "2026-11-01",
   "main": "deploy/worker.ts",
   "assets": {
