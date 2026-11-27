@@ -311,7 +311,7 @@ const worker: Handler = {
     }
 
     if (url.pathname === '/api/health') {
-      return json({ ok: true, service: 'quant-oracle', version: '1.1.0' });
+      return json({ ok: true, service: 'quant-oracle', version: '1.2.0' });
     }
 
     // مسیرهای دیگر: از Assets (اسپا) سرو می‌شود

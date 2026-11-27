@@ -5,6 +5,7 @@ import { CountdownTimer } from './components/CountdownTimer';
 import { Header } from './components/Header';
 import { SignalCard } from './components/SignalCard';
 import { SignalHistoryTable } from './components/SignalHistoryTable';
+import { TimerPanel } from './components/TimerPanel';
 import { TradingViewChart } from './components/TradingViewChart';
 import { ASSET_MAP, ASSETS, FIVE_MINUTES_MS } from './constants/assets';
 import { getSessionStatus, runQuantEngine, selectBestOpportunity } from './engine/quantEngine';
@@ -29,10 +30,26 @@ import {
   SignalRecord,
   TickerSnapshot,
 } from './types/trading';
-import { playSignalChime, unlockAudioContext } from './utils/audio';
+import { playReminderChime, playSignalChime, unlockAudioContext } from './utils/audio';
 
 const STORAGE_SIGNALS_KEY = 'quant_oracle_signals_v1';
 const STORAGE_SOUND_KEY = 'quant_oracle_sound_v1';
+const STORAGE_RESCAN_KEY = 'quant_oracle_rescan_v1';
+const STORAGE_BREAK_KEY = 'quant_oracle_break_v1';
+
+const RESCAN_ALLOWED = new Set([0, 60, 180, 300, 900]);
+const BREAK_ALLOWED = new Set([0, 25, 45, 60]);
+
+function loadStoredTimerOption(key: string, allowed: Set<number>, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const parsed = Number(raw);
+    return allowed.has(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function loadStoredSignals(): SignalRecord[] {
   try {
@@ -145,6 +162,17 @@ export default function App() {
   const [autoSelectBest, setAutoSelectBest] = useState<boolean>(true);
   const [scanningAll, setScanningAll] = useState<boolean>(false);
 
+  // ---- تایمرهای عملیاتی (پنل جدید) ----
+  const [sessionStartMs] = useState<number>(() => Date.now());
+  const [rescanIntervalSec, setRescanIntervalSec] = useState<number>(() =>
+    loadStoredTimerOption(STORAGE_RESCAN_KEY, RESCAN_ALLOWED, 0)
+  );
+  const [lastRescanAt, setLastRescanAt] = useState<number>(() => Date.now());
+  const [breakReminderMin, setBreakReminderMin] = useState<number>(() =>
+    loadStoredTimerOption(STORAGE_BREAK_KEY, BREAK_ALLOWED, 0)
+  );
+  const [lastBreakAt, setLastBreakAt] = useState<number>(() => Date.now());
+
   const candlesCacheRef = useRef<Partial<Record<AssetId, Candle[]>>>({});
   const closedKlinesRef = useRef<Record<string, Candle>>({});
   const syncedEntryIdsRef = useRef<Set<string>>(new Set());
@@ -158,6 +186,8 @@ export default function App() {
   const selectedAssetRef = useRef<AssetId>(selectedAssetId);
   const soundEnabledRef = useRef<boolean>(soundEnabled);
   const autoSelectRef = useRef<boolean>(autoSelectBest);
+  const remainingSecRef = useRef<number>(remainingSeconds);
+  const scanningRef = useRef<boolean>(scanningAll);
 
   useEffect(() => {
     selectedAssetRef.current = selectedAssetId;
@@ -166,6 +196,10 @@ export default function App() {
   useEffect(() => {
     autoSelectRef.current = autoSelectBest;
   }, [autoSelectBest]);
+
+  useEffect(() => {
+    scanningRef.current = scanningAll;
+  }, [scanningAll]);
 
   useEffect(() => {
     signalsRef.current = signals;
@@ -192,6 +226,31 @@ export default function App() {
       // Ignore storage quota errors
     }
   }, [soundEnabled]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_RESCAN_KEY, String(rescanIntervalSec));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [rescanIntervalSec]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_BREAK_KEY, String(breakReminderMin));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [breakReminderMin]);
+
+  // تغییر گزینه‌ها چرخهٔ شمارش همان تایمر را از نو آغاز می‌کند
+  useEffect(() => {
+    setLastRescanAt(Date.now());
+  }, [rescanIntervalSec]);
+
+  useEffect(() => {
+    setLastBreakAt(Date.now());
+  }, [breakReminderMin]);
 
   const activeAsset = ASSET_MAP[selectedAssetId];
 
@@ -674,6 +733,35 @@ export default function App() {
     scanAllAssets(false);
   }, [scanAllAssets]);
 
+  // حلقهٔ تایمرهای عملیاتی: بازاسکن دوره‌ای + یادآور استراحت (دقت ۱ ثانیه)
+  useEffect(() => {
+    const handleTimers = () => {
+      const now = Date.now();
+
+      // بازاسکن دوره‌ای — با گارد پنجرهٔ امن (۵۰ ثانیهٔ پایانی کندل / حین اسکن)
+      if (
+        rescanIntervalSec > 0 &&
+        !scanningRef.current &&
+        now - lastRescanAt >= rescanIntervalSec * 1000 &&
+        remainingSecRef.current > 50
+      ) {
+        setLastRescanAt(now);
+        scanAllAssets(false);
+      }
+
+      // یادآور استراحت — زنگ ملایم و آغاز خودکار چرخهٔ بعدی
+      if (breakReminderMin > 0 && now - lastBreakAt >= breakReminderMin * 60_000) {
+        setLastBreakAt(now);
+        if (soundEnabledRef.current) {
+          playReminderChime();
+        }
+      }
+    };
+
+    const timerTimer = window.setInterval(handleTimers, 1000);
+    return () => window.clearInterval(timerTimer);
+  }, [scanAllAssets, rescanIntervalSec, breakReminderMin, lastRescanAt, lastBreakAt]);
+
   // Atomic 5-minute clock loop (250ms precision)
   useEffect(() => {
     const tick = () => {
@@ -681,6 +769,7 @@ export default function App() {
       setNowMs(current);
       const rem = getRemainingSeconds(current);
       setRemainingSeconds(rem);
+      remainingSecRef.current = rem;
 
       const remMins = Math.floor(rem / 60);
       const secs = rem % 60;
@@ -902,6 +991,19 @@ export default function App() {
             <CountdownTimer
               remainingSeconds={remainingSeconds}
               lastAutoTriggerAt={lastAutoTriggerAt}
+            />
+            <TimerPanel
+              nowMs={nowMs}
+              fiveMinRemainingSec={remainingSeconds}
+              sessionStartMs={sessionStartMs}
+              lastAutoTriggerAt={lastAutoTriggerAt}
+              scanningAll={scanningAll}
+              rescanIntervalSec={rescanIntervalSec}
+              lastRescanAt={lastRescanAt}
+              breakReminderMin={breakReminderMin}
+              lastBreakAt={lastBreakAt}
+              onChangeRescanInterval={setRescanIntervalSec}
+              onChangeBreakReminder={setBreakReminderMin}
             />
             <SignalCard
               asset={activeAsset}
