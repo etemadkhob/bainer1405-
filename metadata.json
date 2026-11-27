@@ -1,0 +1,6 @@
+{
+  "name": "اوراکل کوانت | پیش‌بینی ۵ دقیقه‌ای",
+  "description": "ترمینال کوانت پیش‌بینی کندل بعدی باینری آپشن در تایم‌فریم ۵ دقیقه با موتور الگوریتمی ۸ لایه و داده‌های لحظه‌ای بازار",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
