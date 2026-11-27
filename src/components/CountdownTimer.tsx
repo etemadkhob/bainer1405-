@@ -39,7 +39,7 @@ export function CountdownTimer({ remainingSeconds, lastAutoTriggerAt }: Countdow
             ? 'آماده بسته‌شدن کندل'
             : isTriggerZone
             ? 'پنجره ورود سیگنال فعال'
-            : 'تریگر خودکار در 00:45'}
+            : 'تریگر خودکار در 00:05'}
         </span>
       </div>
 

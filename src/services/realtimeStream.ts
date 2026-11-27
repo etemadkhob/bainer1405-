@@ -5,6 +5,8 @@ export interface KlineTickPayload {
   assetId: AssetId;
   candle: Candle;
   isClosed: boolean;
+  /** تأخیر استریم بر مبنای زمان رویداد سرور بایننس (ms) — برای مانیتورینگ زیر ۱۰۰ms */
+  latencyMs?: number;
 }
 
 const STREAM_SYMBOL_TO_ASSET: Record<string, AssetId> = ASSETS.reduce(
@@ -74,6 +76,7 @@ export function subscribeBinanceKlineStream(
         const assetId = STREAM_SYMBOL_TO_ASSET[sym];
         if (!assetId) return;
 
+        const eventTime = (msg?.data as { E?: number } | undefined)?.E;
         onTick({
           assetId,
           candle: {
@@ -85,6 +88,10 @@ export function subscribeBinanceKlineStream(
             volume: Number(k.v),
           },
           isClosed: Boolean(k.x),
+          latencyMs:
+            eventTime !== undefined && Number.isFinite(eventTime)
+              ? Math.max(0, Date.now() - eventTime)
+              : undefined,
         });
       } catch {
         // Ignore malformed frames

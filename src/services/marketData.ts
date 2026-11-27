@@ -405,3 +405,38 @@ export async function fetchLiveTickers(): Promise<ServerTickerMap['tickers']> {
 
   return {};
 }
+
+// ---------------------------------------------------------------------------
+// تایم‌فریم‌های بالاتر (15m / 1h) برای فیلتر مولتی‌تایم‌فریم — کش ۵ دقیقه‌ای
+// ---------------------------------------------------------------------------
+export interface HigherTimeframes {
+  candles15m?: Candle[];
+  candles1h?: Candle[];
+}
+
+const HTF_TTL_MS = 5 * 60 * 1000;
+const htfCache: Partial<Record<AssetId, { at: number; value: HigherTimeframes }>> = {};
+
+export async function fetchHigherTimeframes(assetId: AssetId): Promise<HigherTimeframes> {
+  const cached = htfCache[assetId];
+  if (cached && Date.now() - cached.at < HTF_TTL_MS) return cached.value;
+
+  const load = async (tf: '15m' | '1h'): Promise<Candle[] | undefined> => {
+    try {
+      const res = await fetch(`/api/klines/${encodeURIComponent(assetId)}?tf=${tf}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return undefined;
+      const payload = (await res.json()) as { candles?: Candle[] };
+      const candles = payload.candles;
+      return Array.isArray(candles) && candles.length >= 60 ? candles : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const [c15, c1h] = await Promise.all([load('15m'), load('1h')]);
+  const value: HigherTimeframes = { candles15m: c15, candles1h: c1h };
+  htfCache[assetId] = { at: Date.now(), value };
+  return value;
+}

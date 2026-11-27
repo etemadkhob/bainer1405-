@@ -1,4 +1,4 @@
-import { Activity, Clock, Volume2, VolumeX, Wifi } from 'lucide-react';
+import { Activity, Clock, Cloud, CloudOff, Gauge, Volume2, VolumeX, Wifi } from 'lucide-react';
 
 interface HeaderProps {
   sessionName: string;
@@ -7,6 +7,10 @@ interface HeaderProps {
   settledCount: number;
   soundEnabled: boolean;
   wsConnected: boolean;
+  streamLatencyMs: number | null;
+  cloudAvailable: boolean;
+  serverWinRate: number | null;
+  serverSettled: number;
   onToggleSound: () => void;
 }
 
@@ -17,6 +21,10 @@ export function Header({
   settledCount,
   soundEnabled,
   wsConnected,
+  streamLatencyMs,
+  cloudAvailable,
+  serverWinRate,
+  serverSettled,
   onToggleSound,
 }: HeaderProps) {
   return (
@@ -44,6 +52,63 @@ export function Header({
             <span className={wsConnected ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
               {wsConnected ? 'داده زنده آنلاین' : 'همگام‌سازی سرور'}
             </span>
+          </div>
+
+          <div className="hidden h-4 w-px bg-[#1E293B] sm:block" aria-hidden="true" />
+
+          {/* Stream Latency (زیر ۱۰۰ms هدف) */}
+          <div
+            title="تأخیر استریم WebSocket بایننس (میانگین متحرک)"
+            className="flex items-center gap-1 text-xs"
+          >
+            <Gauge
+              className={`h-3.5 w-3.5 shrink-0 ${
+                streamLatencyMs === null
+                  ? 'text-slate-500'
+                  : streamLatencyMs <= 100
+                  ? 'text-emerald-400'
+                  : 'text-amber-400'
+              }`}
+            />
+            <span className="text-slate-400">تأخیر:</span>
+            <span
+              dir="ltr"
+              className={`font-mono font-medium tabular-nums ${
+                streamLatencyMs === null
+                  ? 'text-slate-500'
+                  : streamLatencyMs <= 100
+                  ? 'text-emerald-400'
+                  : 'text-amber-400'
+              }`}
+            >
+              {streamLatencyMs === null ? '—' : `${streamLatencyMs}ms`}
+            </span>
+          </div>
+
+          <div className="hidden h-4 w-px bg-[#1E293B] sm:block" aria-hidden="true" />
+
+          {/* Cloud History Sync (دیتابیس سروری Turso) */}
+          <div
+            title={
+              cloudAvailable
+                ? `تاریخچهٔ سروری فعال${serverSettled > 0 ? ` — ${serverSettled} معاملهٔ تسویه‌شده${serverWinRate !== null ? ` · نرخ برد ${serverWinRate.toFixed(1)}٪` : ''}` : ''}`
+                : 'ذخیرهٔ محلی (دیتابیس سروری در دسترس نیست)'
+            }
+            className="flex items-center gap-1.5 text-xs"
+          >
+            {cloudAvailable ? (
+              <Cloud className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            ) : (
+              <CloudOff className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+            )}
+            <span className={cloudAvailable ? 'text-emerald-400 font-medium' : 'text-slate-500'}>
+              {cloudAvailable ? 'همگام با ابر' : 'ذخیره محلی'}
+            </span>
+            {cloudAvailable && serverWinRate !== null && (
+              <span dir="ltr" className="hidden font-mono text-[11px] text-slate-400 tabular-nums xl:inline">
+                {serverWinRate.toFixed(1)}%
+              </span>
+            )}
           </div>
 
           <div className="hidden h-4 w-px bg-[#1E293B] sm:block" aria-hidden="true" />

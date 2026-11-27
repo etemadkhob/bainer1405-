@@ -41,14 +41,14 @@ check('15m: مرز+۲۹۹ثانیه → ۶۰۱', remainingForTimeframe(B15 + 299
 check('1h: مرز+۳۵۹۹ثانیه → ۱', remainingForTimeframe(B1H + 3_599_000, T1H as never), 1);
 check('5m: هم‌ترازی با مبنای 5m اپ (FIVE_MINUTES_MS)', remainingForTimeframe(0, T5M as never), 300);
 
-// ---- تریگر رسمی بعدی (لحظهٔ 00:45) ----
-check('تریگر: remaining=300 → ۲۵۵', secsUntilOfficialTrigger(300), 255);
-check('تریگر: remaining=299 → ۲۵۴', secsUntilOfficialTrigger(299), 254);
-check('تریگر: remaining=46 → ۱', secsUntilOfficialTrigger(46), 1);
-check('تریگر: remaining=45 → صفر (همین حالا)', secsUntilOfficialTrigger(45), 0);
-check('تریگر: remaining=44 → کندل بعدی (۴۴+۲۵۵=۲۹۹)', secsUntilOfficialTrigger(44), 299);
-check('تریگر: remaining=1 → ۲۵۶', secsUntilOfficialTrigger(1), 256);
-check('تریگر: remaining=0 → ۲۵۵', secsUntilOfficialTrigger(0), 255);
+// ---- تریگر رسمی بعدی (لحظهٔ 00:05 — v2.0) ----
+check('تریگر: remaining=300 → ۲۹۵', secsUntilOfficialTrigger(300), 295);
+check('تریگر: remaining=299 → ۲۹۴', secsUntilOfficialTrigger(299), 294);
+check('تریگر: remaining=6 → ۱', secsUntilOfficialTrigger(6), 1);
+check('تریگر: remaining=5 → صفر (همین حالا)', secsUntilOfficialTrigger(5), 0);
+check('تریگر: remaining=4 → کندل بعدی (۴+۲۹۵=۲۹۹)', secsUntilOfficialTrigger(4), 299);
+check('تریگر: remaining=1 → ۲۹۶', secsUntilOfficialTrigger(1), 296);
+check('تریگر: remaining=0 → ۲۹۵', secsUntilOfficialTrigger(0), 295);
 
 // ---- فرمت‌بندی ----
 check('formatMS: 0 → 00:00', formatMS(0), '00:00');
