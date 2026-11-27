@@ -462,7 +462,10 @@ async function loadNewsFromTurso(env: Env): Promise<WireEvent[] | null> {
 }
 
 async function fetchNewsCalendar(env: Env, ctx?: ExecutionContext): Promise<NewsCache['events']> {
-  if (newsCache && Date.now() - newsCache.at < NEWS_TTL_MS) return newsCache.events;
+  if (newsCache && Date.now() - newsCache.at < NEWS_TTL_MS) {
+    newsDiag.push('edge-cache:HIT');
+    return newsCache.events;
+  }
   for (const url of NEWS_SOURCES) {
     try {
       const res = await fetch(url, {
