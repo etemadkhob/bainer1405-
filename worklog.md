@@ -120,3 +120,52 @@
 | استقرار زنده v1.2.0 | 🟢 | health + Version ID |
 | PR #2 به مخزن اصلی | 🟢 | api.github.com → state: open |
 | بازبینی بصری پنل در مرورگر | 🟢 | اسکرین‌شات زندهٔ صفحهٔ deploy شده — ۴ کاشی + ۲ دراپ‌داون + تریگر 01:23 (rem=128s → 128−45) همگی درست |
+
+---
+
+# worklog — هستهٔ استراتژی v2.0.0 (فیلترها + جریان سفارشات + تایمینگ بروکر + تاریخچهٔ ابری)
+
+**تاریخ:** 2026-11-27 · **مهارت غالب:** build-studio · **درخواست:** چهار بخش: فیلترهای هستهٔ استراتژی، ارتقای داده‌ها/Order Flow، زمان‌بندی ورود و بروکر باینری، پایداری و دقت واقعی
+
+## EXECUTE (۱۹ قابلیت → ۴ ماژول جدید + ۷ اصلاح)
+- `src/engine/filters.ts` (جدید): CHOP/ADX/ATR/Wick-Body/EMA/MTF/BTC-Shock/Breaker/EntryZone/News/OTC/Weight — همهٔ خالص و تست‌پذیر
+- `src/engine/gatekeeper.ts` (جدید): زنجیرهٔ ۱۲ گیت + بک‌تست استراتژی + trim آمار لایه‌ها
+- `src/services/orderFlow.ts` (جدید): Depth (پروکسی Worker، کش 20s) + CVD (کندل 1m بایننس Vision، کش 60s)
+- `src/services/historyApi.ts` (جدید): pull/push/stat سروری + merge + تقویم خبر
+- `deploy/turso.ts` (جدید): کلاینت HTTP v2 صفر-وابستگی (پورت از v2.0.0 lineage)
+- `deploy/worker.ts`: +6 مسیر (depth/news/signals GET+POST/stats/klines?tf) + CORS POST + diag
+- `src/App.tsx`: کانتکست تصمیم، تریگر 00:05 با هدف کندل ثابت، sync ابری debounce، بنر OTC، چип ترمز، بک‌تست کش
+- `SignalCard`: بازهٔ ورود + انقضا + نرخ برد واقعی + فیلترهای فعال + ورودی قیمت بروکر
+- `Header`: تأخیر استریم (EMA) + همگام با ابر + نرخ برد سروری
+- `timers.ts`: تریگر 00:45→00:05 (فرمول rem≥5)
+
+## SELF-HEAL (۲ رویداد منطقی)
+| # | نوع | شرح | راه‌حل | نتیجه |
+|---|---|---|---|---|
+| 1 | Logic | فرمول CHOP: مخرج log2(period) نوشته شده بود به‌جای log10 → عدد معکوس؛ + پنجرهٔ ADX ناسازگار (slice 2n ولی الزام n) | اصلاح هر دو فرمول | سبز |
+| 2 | Test | فیکسچرهای تست فاز نامطمئن داشتند (CHOP/BTC/MTF) + ادعای cooldown حسابی غلط | ژنراتورهای قطعی + اصلاح انتظار | سبز |
+| + | Type | ۹ خطای تایپ (tuple بای‌بیت، ReturnType async، آرگومان سوم runDecision) | اصلاح | سبز |
+
+## شواهد اجرا
+- `test_gate.ts` → **50 PASS / 0 FAIL** · `test_timers.ts` → **31 PASS / 0 FAIL** · `test_settlement.ts` → **23 PASS / 0 FAIL** (رگرسیون دقت سبز)
+- `tsc --noEmit` تمیز · `vite build` سبز (`index-CJYy6l5t.js`)
+- استقرار: Version `8c2c675d` · health: `{version:"2.0.0", db:true, gates:[13]}` · Turso secrets ست شد
+- زنده: `/api/depth?asset=BTCUSDT` → `{imbalance:0.356, sellWall:true, buyWall:true}` · `/api/klines/ETHUSDT?tf=15m` → کندل‌های واقعی · `/api/signals` + `/api/stats` → available
+- GitHub: push به `feat/timer-suite` (be4c57d) → PR #2 به‌روز شد
+- بسته: `bainer1405-fix-v2.0.0-2026-11-27.zip` — ۴۸ فایل، testzip OK
+
+## noQA (فرض‌های ثبت‌شده)
+- **تقویم اقتصادی از edge فعلی در دسترس نیست**: diag = `nfs:429` (rate-limit CF→CF) و `cdn-nfs:530`. طراحی fail-open: گیت فعال است، منبع هر ۵ دقیقه retry می‌شود، وقتی در دسترس باشد خودکار بلوک می‌کند. اگر منبع باز شود نیازی به deploy مجدد نیست.
+- بک‌تست فقط گیت‌های متعلق به کندل را دارد (دپت/CVD/خبر/MTF/بیت‌کوین تاریخی نداریم) → نرخ برد نمایشی کمی خوش‌بینانه است؛ در UI برچسب خورده.
+- آستانه‌ها (ADX<15، ATR 0.03٪/1.5٪، دیوار >5×میانه) کالیبراسیون اولیه بازار ۵ دقیقه‌ای است — قابل تنظیم در filters.ts.
+- محاسبات سنگین همه سمت کلاینت است؛ Worker فقط پروکسی/ذخیره — محدودیت CPU ورکر برقرار.
+
+## جدول صداقت
+| ادعا | وضعیت | شاهد |
+|---|---|---|
+| ۱۳ گیت در کد و تست | 🟢 | test_gate 50 PASS + health gates[] |
+| Depth/CVD زنده | 🟢 | خروجی واقعی imbalance 0.356 |
+| تاریخچهٔ Turso | 🟢 | /api/signals + /api/stats available، secrets ست شد |
+| تریگر 00:05 | 🟢 | فرمول + تست 31 PASS |
+| تقویم اقتصادی زنده | 🟡 | منبع از edge 429/530 — fail-open فعال، انتظار بازیابی |
+| بازبینی بصری | 🟡/🟢 | ← پس از اسکرین‌شات زنده |
